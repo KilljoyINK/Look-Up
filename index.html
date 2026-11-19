@@ -111,6 +111,7 @@ ul.why li i{font-style:normal;color:var(--gold);flex:0 0 18px}
     <button class="chip" id="bMoon">Moon</button>
     <button class="chip" id="bList">★ Stars</button>
     <button class="chip" id="bCam" style="display:none">Camera</button>
+    <button class="chip" id="bCal" style="display:none">🧭 Fix north</button>
   </div>
   <div id="hint">Drag to look around · tap a star</div>
 </div>
@@ -421,7 +422,7 @@ const st = {
   loc:null, lines:true, ar:false, camOn:false, target:null, selected:null,
   yaw:180, pitch:35, fov:70, // touch-mode view
   F:[0,1,0], R:[1,0,0], U:[0,0,1], // camera basis in East-North-Up
-  sensor:null, headingOffset:null, absolute:false, lastCalc:0, gift:null
+  sensor:null, headingOffset:null, cal:[], absolute:false, lastCalc:0, gift:null, touchFov:70
 };
 
 function resize(){ DPR=Math.min(window.devicePixelRatio||1,2.5); W=innerWidth; H=innerHeight; cv.width=W*DPR; cv.height=H*DPR; cx.setTransform(DPR,0,0,DPR,0,0); }
@@ -469,7 +470,7 @@ function sensorBasis(){
   const ang=((screen.orientation&&screen.orientation.angle)||window.orientation||0)*D2R;
   let Rt=[X[0]*Math.cos(ang)-Y[0]*Math.sin(ang), X[1]*Math.cos(ang)-Y[1]*Math.sin(ang), X[2]*Math.cos(ang)-Y[2]*Math.sin(ang)];
   // smooth
-  F=norm(lerp(st.F,F,.22)); Rt=norm(lerp(st.R,Rt,.22));
+  F=norm(lerp(st.F,F,.35)); Rt=norm(lerp(st.R,Rt,.35));
   Rt=norm([Rt[0]-F[0]*dot(Rt,F),Rt[1]-F[1]*dot(Rt,F),Rt[2]-F[2]*dot(Rt,F)]);
   st.F=F; st.R=Rt; st.U=cross(Rt,F);
 }
@@ -478,11 +479,27 @@ function onOrient(e, isAbs){
   if(st.absolute && !isAbs) return;           // prefer absolute stream on Android
   if(isAbs) st.absolute=true;
   let alpha=e.alpha;
-  if(typeof e.webkitCompassHeading==="number" && e.webkitCompassHeading>=0){ // iOS: align to true compass
-    const want=(360-e.webkitCompassHeading)-e.alpha;
-    let off=((want%360)+540)%360-180;
-    if(st.headingOffset==null) st.headingOffset=off;
-    else { let d=((off-st.headingOffset)+540)%360-180; st.headingOffset+=d*.05; }
+  /* iOS: alpha is relative to wherever the phone started, so we find ONE fixed offset to true north.
+     The old version kept chasing the compass while you moved; the compass lags and is unreliable
+     when the phone is held upright, so the whole sky got dragged along with you. Now: average the
+     first readings, freeze the offset, and only fine-tune it while the phone is lying fairly flat
+     (where the compass is trustworthy), ignoring any reading that disagrees by more than 15°. */
+  if(typeof e.webkitCompassHeading==="number" && e.webkitCompassHeading>=0 && !isAbs){
+    const off=(((360-e.webkitCompassHeading)-e.alpha)%360+360)%360;
+    const flat=Math.abs(e.beta)<45 && Math.abs(e.gamma)<45;
+    if(st.headingOffset==null){
+      if(st.calFlat && !flat) return;           // "Fix north" waits for the phone to lie flat
+      st.cal.push(off);
+      if(st.cal.length>=15){ // circular mean of the first samples
+        let sx=0,sy=0; for(const o of st.cal){ sx+=Math.cos(o*D2R); sy+=Math.sin(o*D2R); }
+        st.headingOffset=Math.atan2(sy,sx)*R2D; st.cal=[];
+        if(st.calFlat){ st.calFlat=false; toast("North locked in ✓"); }
+      }
+    } else if(flat){
+      const d=((off-st.headingOffset)+540)%360-180;
+      if(Math.abs(d)<15) st.headingOffset+=d*.01;
+    }
+    if(st.headingOffset==null) return;          // still calibrating
     alpha=e.alpha+st.headingOffset;
   }
   st.sensor={alpha,beta:e.beta||0,gamma:e.gamma||0};
@@ -500,6 +517,10 @@ function draw(){
   tick++;
   if(performance.now()-st.lastCalc>1000) recalc();
   if(st.ar && st.sensor) sensorBasis(); else touchBasis();
+  if(st.ar && tick%15===0){ // live readout so you can check the compass against the real sky
+    const F=st.F, az=((Math.atan2(F[0],F[1])*R2D)+360)%360, alt=Math.asin(Math.max(-1,Math.min(1,F[2])))*R2D;
+    $("hint").textContent = st.headingOffset==null && st.sensor==null ? "Finding north…" :
+      `Facing ${compassLong(az)} · ${Math.round(alt)}° up · tap a star`; }
   cx.clearRect(0,0,W,H);
   if(!st.loc){ requestAnimationFrame(draw); return; }
   const zoom=Math.sqrt(70/st.fov);
@@ -738,13 +759,13 @@ cv.addEventListener("pointerdown",e=>{ cv.setPointerCapture(e.pointerId); ptrs.s
 cv.addEventListener("pointermove",e=>{
   const p=ptrs.get(e.pointerId); if(!p) return;
   const dx=e.clientX-p.x, dy=e.clientY-p.y; p.x=e.clientX; p.y=e.clientY; moved+=Math.abs(dx)+Math.abs(dy);
-  if(ptrs.size===2&&pinch0){ const [a,b]=[...ptrs.values()]; const d=Math.hypot(a.x-b.x,a.y-b.y); st.fov=Math.max(20,Math.min(110,pinch0.fov*pinch0.d/d)); return; }
+  if(ptrs.size===2&&pinch0&&!st.ar){ const [a,b]=[...ptrs.values()]; const d=Math.hypot(a.x-b.x,a.y-b.y); st.fov=Math.max(20,Math.min(110,pinch0.fov*pinch0.d/d)); return; }
   if(!st.ar){ const k=st.fov/H; st.yaw=(st.yaw-dx*k+360)%360; st.pitch=Math.max(-15,Math.min(90,st.pitch+dy*k)); }
 });
 const up=e=>{ ptrs.delete(e.pointerId); if(ptrs.size<2) pinch0=null;
   if(moved<10 && downAt && ptrs.size===0) tap(downAt.x,downAt.y); downAt=null; };
 cv.addEventListener("pointerup",up); cv.addEventListener("pointercancel",e=>{ptrs.delete(e.pointerId);downAt=null;});
-cv.addEventListener("wheel",e=>{ e.preventDefault(); st.fov=Math.max(20,Math.min(110,st.fov*(1+e.deltaY*.001))); },{passive:false});
+cv.addEventListener("wheel",e=>{ e.preventDefault(); if(st.ar) return; st.fov=Math.max(20,Math.min(110,st.fov*(1+e.deltaY*.001))); },{passive:false});
 function tap(x,y){
   let best=null,bd=34;
   for(const v of st.visible||[]){
@@ -758,8 +779,14 @@ function tap(x,y){
 $("tLines").onclick=()=>{ st.lines=!st.lines; $("tLines").classList.toggle("on",st.lines); toast(st.lines?"Constellation lines on":"Constellation lines off"); };
 $("tAR").onclick=()=>{ if(st.ar){ setAR(false); } else enableAR(true); };
 $("bCam").onclick=()=>{ st.camOn?stopCam():startCam(); };
+const AR_FOV=68; // vertical view of a typical phone main camera held upright
+$("bCal").onclick=()=>{
+  if(st.absolute){ toast("This phone already knows true north"); return; }
+  st.headingOffset=null; st.cal=[]; st.calFlat=true; toast("Lay your phone flat for a second…"); };
 function setAR(on){
-  st.ar=on; $("tAR").classList.toggle("on",on); $("bCam").style.display=on?"":"none";
+  if(on&&!st.ar){ st.touchFov=st.fov; st.fov=AR_FOV; }      // match the phone camera's view so stars line up
+  if(!on&&st.ar){ st.fov=st.touchFov; }
+  st.ar=on; $("tAR").classList.toggle("on",on); $("bCam").style.display=on?"":"none"; $("bCal").style.display=on?"":"none";
   $("hint").textContent=on?"Hold your phone up to the sky · tap a star":"Drag to look around · pinch to zoom · tap a star";
   if(!on){ stopCam(); // keep looking roughly where the phone pointed
     const F=st.F; st.yaw=((Math.atan2(F[0],F[1])*R2D)+360)%360; st.pitch=Math.asin(Math.max(-1,Math.min(1,F[2])))*R2D; }
