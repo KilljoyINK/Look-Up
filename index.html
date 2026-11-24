@@ -125,6 +125,14 @@ ul.res a{color:#8fb2ff;overflow-wrap:anywhere}
 #warp.on{display:block}
 #top,#bottom{transition:opacity .35s}
 body.closeup #top,body.closeup #bottom{opacity:0;visibility:hidden;transition:opacity .35s,visibility 0s .35s}
+/* facts card: in the close-up it starts small (name + two buttons) so the star or planet gets the screen */
+#iHead{display:flex;align-items:flex-start;gap:10px} #iHead>div{flex:1;min-width:0}
+#bInfoX{display:none;width:36px;padding:0;justify-content:center;flex:0 0 36px;margin-top:2px}
+#bMore{display:none;font-size:13px;font-weight:500;color:var(--accent);padding:0 0 2px}
+#info.cu{padding-top:8px} #info.cu .grab{margin-bottom:8px} #info.cu h2{font-size:24px} #info.cu h3{margin-bottom:6px}
+#info.cu #bInfoX{display:flex} #info.cu #bMore{display:block} #info.cu #bCloseInfo{display:none}
+#info.cu:not(.more) .facts,#info.cu:not(.more) .lore{display:none}
+#info.cu .acts{display:flex;gap:8px} #info.cu .acts .btn{flex:1;height:46px;font-size:14.5px;margin-top:8px}
 body.closeup .scrim{background:transparent;pointer-events:none}   /* lets you drag the star above the card */
 </style>
 </head>
@@ -158,9 +166,9 @@ body.closeup .scrim{background:transparent;pointer-events:none}   /* lets you dr
 <!-- Star info sheet -->
 <div class="scrim" id="scrim"></div>
 <div class="sheet" id="info">
-  <div class="grab"></div>
-  <h2 id="iName"></h2>
-  <h3 id="iCon"></h3>
+  <div class="grab" id="iGrab"></div>
+  <div id="iHead"><div><h2 id="iName"></h2><h3 id="iCon"></h3></div><button class="chip" id="bInfoX" aria-label="Back to the sky">✕</button></div>
+  <button id="bMore">Facts &amp; story ▾</button>
   <div class="facts">
     <div class="fact"><small>Where now</small><b id="iWhere"></b></div>
     <div class="fact"><small>Next</small><b id="iNext"></b></div>
@@ -168,8 +176,10 @@ body.closeup .scrim{background:transparent;pointer-events:none}   /* lets you dr
     <div class="fact"><small>Distance</small><b id="iDist"></b></div>
   </div>
   <p class="lore" id="iLore"></p>
-  <button class="btn ghost" id="bAR3D" style="display:none">◎ View in your room</button>
-  <button class="btn gold" id="bSend">✉︎ Send this star to someone</button>
+  <div class="acts">
+    <button class="btn ghost" id="bAR3D" style="display:none">◎ View in your room</button>
+    <button class="btn gold" id="bSend">✉︎ Send this star to someone</button>
+  </div>
   <button class="btn ghost" id="bCloseInfo">Close</button>
 </div>
 
@@ -1100,10 +1110,16 @@ function showInfo(s, open){
   $("iMag").textContent=m?`Day ${Math.round(MOON.phase.D/360*29.53)} of 29.5`:magText(s.mag);
   $("iDist").textContent=distText(s);
   $("iLore").textContent=lore(s)+lightLeft(s);
-  $("bSend").textContent=m?"✉︎ Send the Moon to someone":s.isPlanet?`✉︎ Send ${s.name} to someone`:"✉︎ Send this star to someone";
+  const cu=$("info").classList.contains("cu");   // close-up: short labels so both buttons fit side by side
+  $("bSend").textContent=cu?"✉︎ Send":m?"✉︎ Send the Moon to someone":s.isPlanet?`✉︎ Send ${s.name} to someone`:"✉︎ Send this star to someone";
+  $("bAR3D").textContent=cu?"◎ In your room":"◎ View in your room";
   $("bAR3D").style.display = QL_OK && !m ? "" : "none";
   if(open!==false) openSheet("info");
 }
+$("bInfoX").onclick=()=>{ if(warp.on) warpOut(); else { st.selected=null; openSheet(null); } };
+function toggleMore(){ const i=$("info"); if(!i.classList.contains("cu")) return; const on=i.classList.toggle("more");
+  $("bMore").textContent=on?"Hide facts ▴":"Facts & story ▾"; }
+$("bMore").onclick=toggleMore; $("iGrab").onclick=toggleMore;
 $("bCloseInfo").onclick=()=>{ if(warp.on){ warpOut(); return; } st.selected=null; openSheet(null); };
 $("bList").onclick=()=>{
   recalc();
@@ -1217,7 +1233,8 @@ function seedWarp(){
 /* where the star sits once you arrive: centred in the space above the info card */
 function closeGeom(){
   const sh=Math.min($("info").offsetHeight||0, H*.86), free=Math.max(H*.34, H-sh);
-  return {x:W/2, y:Math.max(free/2, 80), r:Math.max(40, Math.min(W*.3, free*.33, 170))};
+  const wcap = warp.look&&warp.look.ring ? W*.31 : W*.42;           // Saturn's rings need extra width
+  return {x:W/2, y:Math.max(free/2, 80), r:Math.max(40, Math.min(wcap, free*.38, 230))};
 }
 /* the catalog colours are softened for the sky; undo that so the close-up has real colour */
 function satRGB(c){ return c.split(",").map(v=>Math.round(Math.max(0,Math.min(255,(+v-114.75)/.55)))); }
@@ -1225,7 +1242,9 @@ const mix=(a,b,k)=>a.map((v,i)=>Math.round(v+(b[i]-v)*k)).join(",");
 
 function warpTo(s,x,y){
   if(warp.on) return;
+  $("info").classList.add("cu"); $("info").classList.remove("more"); $("bMore").textContent="Facts & story ▾";
   showInfo(s,false);                       // fill the card now (so we know its height), open it on arrival
+  warp.G=null;
   Object.assign(warp,{s,dir:1,t0:performance.now(),last:performance.now(),from:{x,y},sheetShown:false,on:true,
     look:lookFor(s), spin:Math.random()*6.28, vs:AUTO_SPIN, vt:0, drag:null});
   warp.tilt=warp.look.tilt0;
@@ -1241,7 +1260,7 @@ function warpOut(){
   openSheet(null); st.selected=null;
   warp.dir=-1; warp.t0=warp.last=performance.now();
 }
-function endWarp(){ warp.on=false; warp.s=null; wv.classList.remove("on"); wx.clearRect(0,0,W,H); document.body.classList.remove("closeup"); }
+function endWarp(){ $("info").classList.remove("cu","more"); warp.on=false; warp.s=null; wv.classList.remove("on"); wx.clearRect(0,0,W,H); document.body.classList.remove("closeup"); }
 /* touch: during the trip a tap skips ahead; once you arrive, drag to spin the star, tap empty space to fly home */
 wv.addEventListener("pointerdown",e=>{
   if(!warp.on||warp.dir<0) return;
@@ -1270,7 +1289,10 @@ function warpFrame(now){
   if(!warp.on) return;
   const dt=Math.min(50,now-warp.last)/1000; warp.last=now;
   const D=warp.dir>0?(REDUCED?450:WARP_IN):(REDUCED?300:WARP_OUT), t=clamp01((now-warp.t0)/D);
-  const G=closeGeom(), s=warp.s, col=satRGB(s.rgb);
+  const G0=closeGeom(), s=warp.s, col=satRGB(s.rgb);
+  if(!warp.G) warp.G={...G0}; else { const f=1-Math.exp(-dt*9); for(const k of ["x","y","r"]) warp.G[k]+=(G0[k]-warp.G[k])*f; }  // glide when the card opens or closes
+  const G=warp.G;
+  if(warp.sheetShown && SG.ok && warp.look) sizeStarGL(G.r*warp.look.drawMul);   // keep the 3D picture sharp at its new size
   if(!warp.drag){                       // coast after a flick, then settle back to a slow turn
     const f=1-Math.exp(-dt*1.4);
     warp.spin+=warp.vs*dt; warp.tilt=Math.max(-1.3,Math.min(1.3,warp.tilt+warp.vt*dt));
@@ -1529,7 +1551,7 @@ void main(){
   gl_FragColor=vec4(col,1.);
 }`;
 /* bake: paint the whole surface flat (longitude across, latitude up), like a world map */
-const BAKE_VS=`attribute vec2 aQ; varying vec2 vUV; void main(){ vUV=aQ*.5+.5; gl_Position=vec4(aQ,0.,1.); }`;
+const BAKE_VS=`attribute vec2 aQ; uniform vec4 uTile; varying vec2 vUV; void main(){ vUV=uTile.xy+(aQ*.5+.5)*uTile.zw; gl_Position=vec4(aQ,0.,1.); }`;
 const BAKE_FS=`
 varying vec2 vUV; uniform float uPhase;
 void main(){
@@ -1539,7 +1561,7 @@ void main(){
   vec3 c= uKind<.5 ? starSurface(P,.75,uPhase,0.) : planetAlbedo(P);   /* .75: keeps the colour rich instead of washed-out white */
   gl_FragColor=vec4(clamp(c,0.,1.),1.);
 }`;
-const UNIFORMS=["uRot","uNorm","uFlat","uScale","uCol","uTime","uCells","uContrast","uSpots","uLimb","uGlow","uSoft","uKind","uLight","uPhase"];
+const UNIFORMS=["uRot","uNorm","uFlat","uScale","uCol","uTime","uCells","uContrast","uSpots","uLimb","uGlow","uSoft","uKind","uLight","uPhase","uTile"];
 
 function parseGLB(b64){
   const bin=Uint8Array.from(atob(b64),c=>c.charCodeAt(0)), dv=new DataView(bin.buffer);
@@ -1603,7 +1625,7 @@ function drawMesh(g){ const gl=SG.gl;
   gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,g.idx); gl.drawElements(gl.TRIANGLES,g.count,gl.UNSIGNED_SHORT,0); }
 function renderStarGL(L, now){
   const {gl,view:{pr,u},m}=SG, t=(now/1000)%1000;
-  gl.viewport(0,0,SG.cv.width,SG.cv.height);
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null); gl.viewport(0,0,SG.cv.width,SG.cv.height);
   gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
   gl.enable(gl.DEPTH_TEST); gl.depthMask(true); gl.disable(gl.CULL_FACE); gl.disable(gl.BLEND);
   gl.useProgram(pr);
@@ -1625,23 +1647,42 @@ function renderStarGL(L, now){
   return SG.cv;
 }
 /* paint a flat surface map (w × h pixels) and hand back the pixels the right way up */
-function bakePixels(L, kind, phase, w, h){
-  const {gl,bake:{pr,u}}=SG;
-  SG.cv.width=w; SG.cv.height=h; gl.viewport(0,0,w,h);
-  gl.disable(gl.DEPTH_TEST); gl.disable(gl.BLEND); gl.useProgram(pr);
-  setLook(u,L); gl.uniform1f(u.uKind,kind); gl.uniform1f(u.uPhase,phase); gl.uniform1f(u.uGlow,1);
-  gl.bindBuffer(gl.ARRAY_BUFFER,SG.quad); gl.enableVertexAttribArray(SG.aQ); gl.vertexAttribPointer(SG.aQ,2,gl.FLOAT,false,0,0);
-  gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
-  const px=new Uint8Array(w*h*4); gl.readPixels(0,0,w,h,gl.RGBA,gl.UNSIGNED_BYTE,px);
-  const img=new ImageData(w,h);
-  for(let y=0;y<h;y++) img.data.set(px.subarray((h-1-y)*w*4,(h-y)*w*4), y*w*4);   // WebGL rows come bottom-first
+/* paint a flat surface map (w × h pixels, up to 4K) and hand back the pixels the right way up.
+   It paints in tiles into an off-screen buffer, so: the live close-up's canvas is never resized (it keeps
+   spinning smoothly while the file builds), no single GPU job runs long enough for iOS to stop it, and it
+   works even on phones whose screen buffer can't reach 4K. */
+async function bakePixels(L, kind, phase, w, h){
+  const {gl,bake:{pr,u}}=SG, tw=Math.min(1024,w), th=Math.min(1024,h);
+  if(!SG.fbo||SG.fboW!==tw||SG.fboH!==th){
+    if(SG.fbo){ gl.deleteFramebuffer(SG.fbo); gl.deleteTexture(SG.fboTex); }
+    SG.fboTex=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,SG.fboTex);
+    gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,tw,th,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+    SG.fbo=gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER,SG.fbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,SG.fboTex,0);
+    gl.bindFramebuffer(gl.FRAMEBUFFER,null); SG.fboW=tw; SG.fboH=th;
+  }
+  const img=new ImageData(w,h), px=new Uint8Array(tw*th*4);
+  for(let ty=0;ty<h;ty+=th) for(let tx=0;tx<w;tx+=tw){
+    gl.bindFramebuffer(gl.FRAMEBUFFER,SG.fbo); gl.viewport(0,0,tw,th);
+    gl.disable(gl.DEPTH_TEST); gl.disable(gl.BLEND); gl.useProgram(pr);
+    setLook(u,L); gl.uniform1f(u.uKind,kind); gl.uniform1f(u.uPhase,phase); gl.uniform1f(u.uGlow,1);
+    gl.uniform4f(u.uTile,tx/w,ty/h,tw/w,th/h);                       // which piece of the map this tile is
+    gl.bindBuffer(gl.ARRAY_BUFFER,SG.quad); gl.enableVertexAttribArray(SG.aQ); gl.vertexAttribPointer(SG.aQ,2,gl.FLOAT,false,0,0);
+    gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+    gl.readPixels(0,0,tw,th,gl.RGBA,gl.UNSIGNED_BYTE,px);
+    gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+    for(let r=0;r<th;r++) img.data.set(px.subarray(r*tw*4,(r+1)*tw*4), ((h-1-(ty+r))*w+tx)*4);   // WebGL rows come bottom-first
+    await new Promise(requestAnimationFrame);                         // let the close-up draw a frame between tiles
+  }
   return img;
 }
 
 /* ================= VIEW IN YOUR ROOM (iPhone · AR Quick Look) =================
    iPhone browsers can't run live 3D in the camera view, but they can open Apple's Quick Look viewer.
    So, on tap, we build a 3D file (USDZ) right on the phone:
-   · your sphere, at its real-world size, with 4K shader-painted surface maps and PBR lighting
+   · your sphere, at its real-world size, with the shader's surface painted on as picture maps
    · stars: 6 slightly different "boiling" maps that take turns showing (a flipbook), so the surface churns
    · a slow spin that loops every 9 s (under 10 s, so Quick Look loops it with no playback bar); Betelgeuse also pulses
    · Saturn gets its two-sided ring disc
@@ -1719,9 +1760,8 @@ function matUSD(name, file, {glow=false, alpha=false}={}){
                 color3f inputs:diffuseColor.connect = <${p}/${glow?"TexDim":"Tex"}.outputs:rgb>${glow?`
                 color3f inputs:emissiveColor.connect = <${p}/Tex.outputs:rgb>`:""}${alpha?`
                 float inputs:opacity.connect = <${p}/Tex.outputs:a>`:""}
-                float inputs:metallic = ${glow?0:.02}
-                float inputs:specular = ${glow?.18:.32}
-                float inputs:roughness = ${glow?.92:.68}
+                float inputs:metallic = 0
+                float inputs:roughness = ${glow?1:.85}
                 token outputs:surface
             }
 
@@ -1839,7 +1879,7 @@ function zipUSDZ(files){                         // files: [{name, data:Uint8Arr
   e.setUint32(12,cdSize,true); e.setUint32(16,off,true);
   return new Blob([...out,...central,new Uint8Array(e.buffer)],{type:"model/vnd.usdz+zip"});
 }
-async function encodeImg(img,type,quality=.92){
+async function encodeImg(img,type,quality=.9){
   const c=document.createElement("canvas"); c.width=img.width; c.height=img.height; c.getContext("2d").putImageData(img,0,0);
   const b=await new Promise((res,rej)=>c.toBlob(x=>x?res(x):rej(new Error("image encode failed")),type,quality));
   return new Uint8Array(await b.arrayBuffer());
@@ -1847,21 +1887,15 @@ async function encodeImg(img,type,quality=.92){
 async function buildUSDZ(s){
   if(!starGL()) throw new Error("no WebGL");
   const L=lookFor(s), N=L.planet?1:QL_FRAMES;
-  // 4K equirectangular maps. Bake and encode one at a time to keep peak mobile memory reasonable.
-  // The USD Preview Surface supplies physically-based scene lighting; the source shader supplies
-  // the star/planet albedo, while mesh normals provide smooth geometric shading.
-  const TEX_W=4096, TEX_H=2048;
-  const files=[], names=[];
+  // Sharp maps: planets get one 4K map (4096 × 2048). Stars need 6 flipbook maps, so they get 2K each
+  // (4× the pixels of before): six 4K maps would be about a quarter-gigabyte of graphics memory in Quick Look.
+  // Each map is painted and squeezed to JPEG one at a time, so only one big picture is in memory at once.
+  const TW=L.planet?4096:2048, TH=TW/2, files=[], names=[];
   for(let k=0;k<N;k++){
-    const map=bakePixels(L,L.kind,k/N*Math.PI*4,TEX_W,TEX_H); // 4π: the boiling loops seamlessly
-    const name=`textures/surface${k}.jpg`; names.push(name);
-    files.push({name, data:await encodeImg(map,"image/jpeg",.94)});
+    const map=await bakePixels(L,L.kind,k/N*Math.PI*4,TW,TH);        // 4π: the boiling loops seamlessly
+    names.push(`textures/surface${k}.jpg`); files.push({name:names[k], data:await encodeImg(map,"image/jpeg",.92)});
   }
-  if(L.ring){
-    const ringMap=bakePixels(L,6,0,4096,64);
-    files.push({name:"textures/rings.png", data:await encodeImg(ringMap,"image/png")});
-  }
-  if(warp.on&&warp.look) sizeStarGL(closeGeom().r*warp.look.drawMul);
+  if(L.ring) files.push({name:"textures/rings.png", data:await encodeImg(await bakePixels(L,6,0,4096,16),"image/png")});
   const usda=new TextEncoder().encode(usdaFor(s,L,names));
   return zipUSDZ([{name:`${s.id}.usda`, data:usda}, ...files]);
 }
