@@ -4,27 +4,62 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>In My Room · banner</title>
-<!-- Shown by iPhone's AR Quick Look at the bottom of the room view. In My Room fills it in through the link
-     (?name=…&sub=…&fact=…&cta=…). Tapping anywhere on it closes Quick Look and opens "Send this star". -->
+<!-- Shown by iPhone's AR Quick Look at the bottom of the room view. In My Room fills it in through the link:
+     ?name=…&kind=…&facts=Label|Value;Label|Value;Label|Value&fact=…&col=r,g,b&cta=…
+     Tapping anywhere on it closes Quick Look and opens "Send this star". It stretches to fill whatever
+     height Quick Look gives it, so there's no empty space. -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=Inter:wght@400;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
+  :root{--c:255,217,138}
   *{box-sizing:border-box;margin:0}
-  html,body{height:100%;background:#0d1028;color:#eef1ff;font-family:Inter,system-ui,sans-serif;-webkit-text-size-adjust:100%}
-  body{display:flex;align-items:center;gap:14px;padding:12px 16px}
-  .txt{flex:1;min-width:0}
-  h1{font-family:Fraunces,serif;font-weight:600;font-size:20px;line-height:1.15;color:#ffd98a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .sub{font-size:12px;color:#9aa3c7;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .fact{font-size:13px;line-height:1.35;color:#d6dbf5;margin-top:6px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
-  .cta{flex:0 0 auto;background:#ffd98a;color:#0a0c1d;font-weight:600;font-size:14px;padding:10px 14px;border-radius:14px;text-align:center;max-width:110px;line-height:1.2}
+  html,body{height:100%;-webkit-text-size-adjust:100%}
+  body{
+    font-family:Inter,system-ui,sans-serif;color:#eef1ff;overflow:hidden;
+    background:radial-gradient(140% 160% at 0% 50%,rgba(var(--c),.30) 0%,rgba(var(--c),.08) 38%,transparent 62%),#0b0e24;
+    display:grid;grid-template-columns:auto 1fr auto;gap:12px;padding:10px 10px 10px 14px;
+  }
+  /* the star itself, in its real colour */
+  .orb{align-self:center;width:clamp(40px,34vh,60px);aspect-ratio:1;border-radius:50%;
+    background:radial-gradient(circle at 38% 35%,#fff 0%,rgba(var(--c),1) 45%,rgba(var(--c),.55) 100%);
+    box-shadow:0 0 18px 4px rgba(var(--c),.55),0 0 40px 10px rgba(var(--c),.18)}
+  .main{min-width:0;display:flex;flex-direction:column;justify-content:space-between;gap:4px}
+  h1{font-family:Fraunces,serif;font-weight:600;font-size:clamp(17px,14vh,21px);line-height:1.05;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .kind{font-size:11.5px;color:rgba(var(--c),.95);filter:brightness(1.15);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
+  /* three quick facts, side by side */
+  .facts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px}
+  .f{background:#ffffff0d;border:1px solid #ffffff14;border-radius:9px;padding:4px 5px;min-width:0}
+  .f small{display:block;font-size:8.5px;letter-spacing:.35px;text-transform:uppercase;color:#9aa3c7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .f b{display:block;font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .fact{font-size:11.5px;line-height:1.3;color:#cfd5f2;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  /* full-height Send button */
+  .cta{width:58px;border-radius:16px;background:#ffd98a;color:#0a0c1d;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;font-weight:600;font-size:13px}
+  .cta svg{width:22px;height:22px}
+  /* very short banner: keep name, facts and button; drop the story line */
+  @media (max-height:110px){ .fact{display:none} .orb{width:40px} }
+  /* small phones: smaller orb and button so the three facts still fit */
+  @media (max-width:350px){ body{gap:8px;padding-left:10px} .orb{width:30px} .cta{width:50px;font-size:12px} .facts{gap:4px} .f{padding:3px 4px} .f b{font-size:11px} .f small{font-size:7.5px;letter-spacing:.3px} }
 </style>
 </head>
 <body>
-  <div class="txt"><h1 id="n">A star</h1><div class="sub" id="s"></div><div class="fact" id="f"></div></div>
-  <div class="cta" id="c">Send this star</div>
+  <div class="orb" aria-hidden="true"></div>
+  <div class="main">
+    <div><h1 id="n">A star</h1><div class="kind" id="k"></div></div>
+    <div class="facts" id="fs"></div>
+    <p class="fact" id="f"></p>
+  </div>
+  <div class="cta"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="m4 7 8 6 8-6"/></svg><span id="c">Send</span></div>
 <script>
-  const q=new URLSearchParams(location.search), set=(id,k)=>{ const v=q.get(k); if(v) document.getElementById(id).textContent=v.slice(0,220); };
-  set("n","name"); set("s","sub"); set("f","fact"); set("c","cta");
+  const q=new URLSearchParams(location.search), get=(k,max=200)=>(q.get(k)||"").slice(0,max);
+  const set=(id,k)=>{ const v=get(k); if(v) document.getElementById(id).textContent=v; };
+  set("n","name"); set("k","kind"); set("f","fact"); set("c","cta");
+  const col=get("col",20); if(/^\d{1,3},\d{1,3},\d{1,3}$/.test(col)) document.documentElement.style.setProperty("--c",col);
+  const box=document.getElementById("fs");
+  for(const pair of get("facts",300).split(";").filter(Boolean).slice(0,3)){
+    const [label,value]=pair.split("|"), d=document.createElement("div"), s=document.createElement("small"), b=document.createElement("b");
+    d.className="f"; s.textContent=label||""; b.textContent=value||""; d.append(s,b); box.append(d);
+  }
+  if(!box.children.length) box.style.display="none";
 </script>
 </body>
 </html>

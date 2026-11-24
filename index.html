@@ -1312,7 +1312,8 @@ function warpFrame(now){
     if(!REDUCED && warp.distV && t<.86) distCounter(warp.distV*(1-easeIn(clamp01(t/.82))), warp.distL, smooth(.05,.2,t)*(1-smooth(.74,.86,t)));
     const fl=REDUCED?0:Math.max(0,1-Math.abs(t-.9)/.1);                               // arrival flash
     if(fl>0){ wx.fillStyle=`rgba(${mix(col,[255,255,255],.75)},${.8*fl})`; wx.fillRect(0,0,W,H); }
-    if(t>=.92&&!warp.sheetShown){ warp.sheetShown=true; warp.arriveAt=now; openSheet("info"); }
+    if(t>=.92&&!warp.sheetShown){ warp.sheetShown=true; warp.arriveAt=now; openSheet("info");
+      if(QL_OK) setTimeout(()=>{ if(warp.on&&warp.s===s) prepUSDZ(s); },1000); }   // get the room file ready in the background
     if(warp.sheetShown) closeCaption(smooth(400,900,now-warp.arriveAt));
   } else {
     // fly back out: the star shrinks away and the streaks run backwards
@@ -1433,7 +1434,7 @@ function starLook(s){
     limb: lerp1(.62,.38,hot)+.15*giant,                // how much darker the edge gets
     flat: OBLATE[s.id]||1, pulseAmp:p[0], pulsePer:p[1],
     speed: lerp1(1,.35,giant),                         // giant cells churn slowly
-    tilt0:.35, extent:1, drawMul:1,
+    tilt0:.35, extent:1, drawMul:1, giant, T,
     sizeM: .8+.7*giant                                 // width in your room: 0.8 m for small stars up to 1.5 m for supergiants
   };
 }
@@ -1682,14 +1683,21 @@ async function bakePixels(L, kind, phase, w, h){
 /* ================= VIEW IN YOUR ROOM (iPhone · AR Quick Look) =================
    iPhone browsers can't run live 3D in the camera view, but they can open Apple's Quick Look viewer.
    So, on tap, we build a 3D file (USDZ) right on the phone:
-   · your sphere, at its real-world size, with the shader's surface painted on as picture maps
-   · stars: 6 slightly different "boiling" maps that take turns showing (a flipbook), so the surface churns
-   · a slow spin that loops every 9 s (under 10 s, so Quick Look loops it with no playback bar); Betelgeuse also pulses
+   · your sphere, at its real-world size, with the shader's surface painted on as one sharp 4K picture map
    · Saturn gets its two-sided ring disc
+   It turns slowly (one smooth turn per loop). The boiling surface isn't included: Quick Look can only swap
+   surface pictures instantly (no fades), which looked glitchy. The file starts building quietly as soon as you arrive at a
+   star or planet, so it's usually ready before you tap "In your room".
    A banner at the bottom keeps the name and facts on screen, and its button opens "Send this star". */
 const QL_OK=(()=>{ try{ return document.createElement("a").relList.supports("ar"); }catch(e){ return false; } })();
-const QL_FPS=60, QL_LOOP=540, QL_FRAMES=6;          // 9 seconds at 60 time-codes per second
+/* seconds per full turn in the room view. Keep it under 10: longer loops make Quick Look show a playback bar. */
+const QL_SPIN_SECONDS=9.5, QL_FPS=24;
 const usdzCache={};
+/* Use our own banner only if banner.html is really there; otherwise Quick Look would show the site's 404 page.
+   If it's missing, Apple's built-in banner (name, distance, Send button) is used instead. */
+let BANNER_OK=false;
+if(location.protocol==="https:") fetch(new URL("banner.html",location.href),{method:"HEAD",cache:"no-store"})
+  .then(r=>{ BANNER_OK=r.ok; if(!r.ok) console.warn("banner.html not found next to index.html; using Apple's built-in banner"); }).catch(()=>{});
 
 /* the pieces of a USD mesh, written as text */
 const f3=a=>"["+Array.from({length:a.length/3},(_,i)=>`(${a[i*3].toFixed(4)}, ${a[i*3+1].toFixed(4)}, ${a[i*3+2].toFixed(4)})`).join(", ")+"]";
@@ -1773,46 +1781,21 @@ function matUSD(name, file, {glow=false, alpha=false}={}){
             }${tex("Tex")}${glow?tex("TexDim",.3):""}
         }`;
 }
-/* keyframes: {time: value} written the USD way */
-const keysUSD=(type,obj)=>`${type}.timeSamples = {\n${Object.entries(obj).map(([t,v])=>`                ${t}: ${v},`).join("\n")}\n            }`;
-const s3=v=>`(${v}, ${v}, ${v})`;
-/* flipbook: frame k shows (scale 1) during its slice of the loop and hides (tiny scale) otherwise */
-function flipKeys(k,N){
-  const T=QL_LOOP, a=Math.round(k*T/N), b=Math.round((k+1)*T/N), on=s3(1), off=s3(.0001), K={};
-  if(k===0){ K[0]=on; K[b-1]=on; K[b]=off; K[T-1]=off; K[T]=on; }
-  else { K[0]=off; K[a-1]=off; K[a]=on; K[b-1]=on; K[b]=off; if(b<T) K[T]=off; }
-  return K;
-}
-function usdaFor(s,L,texFiles){
-  const rad=L.sizeM/2, N=texFiles.length;
-  const pulse = L.pulseAmp ? keysUSD("float3 xformOp:scale",Object.fromEntries(Array.from({length:QL_LOOP/15+1},(_,i)=>{
-      const t=i*15; return [t, s3((1+L.pulseAmp*Math.sin(t/QL_LOOP*2*Math.PI)).toFixed(4))]; }))) : "";
-  const body = texFiles.map((f,k)=>`
-            def Xform "Frame${k}"
-            {${N>1?`
-                ${keysUSD("float3 xformOp:scale",flipKeys(k,N))}
-                uniform token[] xformOpOrder = ["xformOp:scale"]`:""}
-
-                def Mesh "Body"
-                {
-                    rel material:binding = </Root/Materials/M${k}>
-                    ${sphereUSD(rad,L.flat)}
-                }
-            }`).join("\n");
+function usdaFor(s,L,tex){
+  const rad=L.sizeM/2;
   const ring = L.ring ? `
-            def Mesh "Rings"
-            {
-                rel material:binding = </Root/Materials/Rings>
-                ${ringUSD(rad)}
-            }` : "";
-  const mats = texFiles.map((f,k)=>matUSD(`M${k}`,f,{glow:!L.planet})).join("\n") + (L.ring?matUSD("Rings","textures/rings.png",{alpha:true}):"");
+        def Mesh "Rings"
+        {
+            rel material:binding = </Root/Materials/Rings>
+            ${ringUSD(rad)}
+        }` : "";
   return `#usda 1.0
 (
     customLayerData = {
         string creator = "In My Room by Madot Girma"
     }
     defaultPrim = "Root"
-    endTimeCode = ${QL_LOOP}
+    endTimeCode = ${Math.round(QL_SPIN_SECONDS*QL_FPS)}
     metersPerUnit = 1
     startTimeCode = 0
     timeCodesPerSecond = ${QL_FPS}
@@ -1833,21 +1816,23 @@ def Xform "Root" (
 
         def Xform "Spin"
         {
-            ${keysUSD("float xformOp:rotateY",{0:0,[QL_LOOP]:360})}
+            float xformOp:rotateY.timeSamples = {
+                0: 0,
+                ${Math.round(QL_SPIN_SECONDS*QL_FPS)}: 360,
+            }
             uniform token[] xformOpOrder = ["xformOp:rotateY"]
 
-            def Xform "Pulse"
-            {${pulse?`
-            ${pulse}
-            uniform token[] xformOpOrder = ["xformOp:scale"]`:""}
-${body}
-${ring}
+            def Mesh "Body"
+            {
+                rel material:binding = </Root/Materials/Surface>
+                ${sphereUSD(rad,L.flat)}
             }
+${ring}
         }
     }
 
     def Scope "Materials"
-    {${mats}
+    {${matUSD("Surface",tex,{glow:!L.planet})}${L.ring?matUSD("Rings","textures/rings.png",{alpha:true}):""}
     }
 }
 `;
@@ -1886,27 +1871,42 @@ async function encodeImg(img,type,quality=.9){
 }
 async function buildUSDZ(s){
   if(!starGL()) throw new Error("no WebGL");
-  const L=lookFor(s), N=L.planet?1:QL_FRAMES;
-  // Sharp maps: planets get one 4K map (4096 × 2048). Stars need 6 flipbook maps, so they get 2K each
-  // (4× the pixels of before): six 4K maps would be about a quarter-gigabyte of graphics memory in Quick Look.
-  // Each map is painted and squeezed to JPEG one at a time, so only one big picture is in memory at once.
-  const TW=L.planet?4096:2048, TH=TW/2, files=[], names=[];
-  for(let k=0;k<N;k++){
-    const map=await bakePixels(L,L.kind,k/N*Math.PI*4,TW,TH);        // 4π: the boiling loops seamlessly
-    names.push(`textures/surface${k}.jpg`); files.push({name:names[k], data:await encodeImg(map,"image/jpeg",.92)});
-  }
+  const L=lookFor(s), files=[], tex="textures/surface.jpg";
+  // one sharp 4K map (4096 × 2048) for stars and planets alike
+  files.push({name:tex, data:await encodeImg(await bakePixels(L,L.kind,0,4096,2048),"image/jpeg",.9)});
   if(L.ring) files.push({name:"textures/rings.png", data:await encodeImg(await bakePixels(L,6,0,4096,16),"image/png")});
-  const usda=new TextEncoder().encode(usdaFor(s,L,names));
+  const usda=new TextEncoder().encode(usdaFor(s,L,tex));
   return zipUSDZ([{name:`${s.id}.usda`, data:usda}, ...files]);
+}
+/* What the Quick Look banner shows: name, what kind of object it is, three quick facts, one story line, its colour */
+function starKind(L){
+  const T=L.T, colour= T>10000?"Blue-white": T>7500?"White": T>6000?"Yellow-white": T>5200?"Yellow": T>3700?"Orange":"Red";
+  return colour+(L.giant>.6?" supergiant": L.giant>.2?" giant":" star");
+}
+function bannerInfo(s){
+  const L=lookFor(s), n=x=>Math.round(x).toLocaleString();
+  let kind, facts;
+  if(s.isPlanet){
+    const km=planetKm(s), min=km/299792/60;
+    kind=(["jupiter","saturn"].includes(s.id)?"Gas giant":"Rocky planet")+" · in "+conName(s);
+    facts=[["Distance",km>=1e9?`${(km/1e9).toFixed(1)}B km`:`${n(km/1e6)}M km`],["Sunlight",min<2?`${n(min*60)} sec`:`${n(min)} min`],
+      ["Earth size",(w=>`${w>=2?Math.round(w):w.toFixed(1)}×`)(({mercury:.38,venus:.95,mars:.53,jupiter:11.2,saturn:9.45})[s.id])]];   // how many Earths wide
+  } else {
+    kind=starKind(L)+" · "+conName(s);
+    const F=(L.T-273.15)*9/5+32;
+    facts=[["Distance",s.dist?`${n(s.dist)} ly`:"Unknown"],["Surface",`${n(Math.round(F/10)*10)}°F`],
+      s.dist&&s.dist<2026?["Light left",`${new Date().getFullYear()-Math.round(s.dist)}`]:["Light age",s.dist?`${n(s.dist)} yrs`:"—"]];
+  }
+  return {name:s.name, kind, facts:facts.map(f=>f.join("|")).join(";"), fact:lore(s), col:satRGB(s.rgb).join(","), cta:"Send"};
 }
 /* open Quick Look. The banner keeps the name and a fact on screen; its button brings you back to "Send". */
 function openQuickLook(blob,s){
   const kind=s.isPlanet?"planet":"star", e=encodeURIComponent;
   const sub=`${s.isPlanet?"Planet":conName(s)} · ${distText(s)} away`;
   let frag=`#allowsContentScaling=0&canonicalWebPageURL=${e(shareLink(s))}`;
-  if(location.protocol==="https:"){             // online: our own banner page with a fact (banner.html sits next to this file)
+  if(BANNER_OK){                                // online and banner.html was found next to this file: our banner with a fact
     const b=new URL("banner.html",location.href);
-    b.search=new URLSearchParams({name:s.name, sub, fact:lore(s), cta:`Send this ${kind}`}).toString();
+    b.search=new URLSearchParams(bannerInfo(s)).toString();
     frag+=`&custom=${e(b.href)}&customHeight=large`;
   } else frag+=`&callToAction=${e("Send this "+kind)}&checkoutTitle=${e(s.name)}&checkoutSubtitle=${e(sub)}`;
   document.querySelectorAll("a[data-ql]").forEach(a=>a.remove());
@@ -1915,10 +1915,15 @@ function openQuickLook(blob,s){
   a.addEventListener("message",ev=>{ if(ev.data==="_apple_ar_quicklook_button_tapped"){ st.selected=s; $("bSend").click(); } },false);
   document.body.appendChild(a); a.click();
 }
+/* start (or reuse) building the room file for s; failed builds are forgotten so a tap can retry */
+function prepUSDZ(s){
+  if(!usdzCache[s.id]){ const p=buildUSDZ(s); usdzCache[s.id]=p; p.catch(()=>{ if(usdzCache[s.id]===p) delete usdzCache[s.id]; }); }
+  return usdzCache[s.id];
+}
 async function viewInRoom(s){
   const btn=$("bAR3D"), label=btn.textContent;
-  btn.disabled=true; btn.textContent=`Building your ${s.isPlanet?"planet":"star"}…`;
-  try{ const blob=usdzCache[s.id]||(usdzCache[s.id]=await buildUSDZ(s)); openQuickLook(blob,s); }
+  btn.disabled=true; btn.textContent="Getting it ready…";
+  try{ openQuickLook(await prepUSDZ(s),s); }
   catch(e){ console.warn(e); toast("Couldn't build the 3D view on this phone"); }
   finally{ btn.disabled=false; btn.textContent=label; }
 }
