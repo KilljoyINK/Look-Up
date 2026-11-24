@@ -119,11 +119,19 @@ ul.res a{color:#8fb2ff;overflow-wrap:anywhere}
 .list button.down{opacity:.45}
 #toast{position:fixed;left:50%;top:calc(var(--st) + 70px);transform:translate(-50%,-10px);background:#ffffffee;color:#0a0c1d;padding:9px 16px;border-radius:20px;font-size:14px;font-weight:500;opacity:0;transition:.25s;pointer-events:none;z-index:50}
 #toast.show{opacity:1;transform:translate(-50%,0)}
+
+/* warp zoom: its own layer above the sky, below the bars and sheets */
+#warp{position:fixed;inset:0;width:100%;height:100%;display:none;touch-action:none}
+#warp.on{display:block}
+#top,#bottom{transition:opacity .35s}
+body.closeup #top,body.closeup #bottom{opacity:0;visibility:hidden;transition:opacity .35s,visibility 0s .35s}
+body.closeup .scrim{background:transparent}
 </style>
 </head>
 <body>
 <video id="cam" playsinline muted autoplay></video>
 <canvas id="sky"></canvas>
+<canvas id="warp" aria-hidden="true"></canvas>
 
 <!-- Top bar -->
 <div id="top">
@@ -1076,8 +1084,8 @@ function updateBanner(){
 
 /* ================= SHEETS ================= */
 function openSheet(id){ document.querySelectorAll(".sheet").forEach(s=>s.classList.toggle("show",s.id===id)); $("scrim").classList.toggle("show",!!id); }
-$("scrim").onclick=()=>openSheet(null);
-function showInfo(s){
+$("scrim").onclick=()=>{ if(warp.on) warpOut(); else openSheet(null); };
+function showInfo(s, open){
   st.selected=s; recalc();
   const m=s.isMoon;
   $("iName").textContent=m?`${MOON.phase.emoji} The Moon`:s.name;
@@ -1088,9 +1096,9 @@ function showInfo(s){
   $("iDist").textContent=distText(s);
   $("iLore").textContent=lore(s)+lightLeft(s);
   $("bSend").textContent=m?"✉︎ Send the Moon to someone":s.isPlanet?`✉︎ Send ${s.name} to someone`:"✉︎ Send this star to someone";
-  openSheet("info");
+  if(open!==false) openSheet("info");
 }
-$("bCloseInfo").onclick=()=>{ st.selected=null; openSheet(null); };
+$("bCloseInfo").onclick=()=>{ if(warp.on){ warpOut(); return; } st.selected=null; openSheet(null); };
 $("bList").onclick=()=>{
   recalc();
   const L=$("list"); L.innerHTML="";
@@ -1169,12 +1177,159 @@ const up=e=>{ ptrs.delete(e.pointerId); if(ptrs.size<2) pinch0=null;
 cv.addEventListener("pointerup",up); cv.addEventListener("pointercancel",e=>{ptrs.delete(e.pointerId);downAt=null;});
 cv.addEventListener("wheel",e=>{ e.preventDefault(); if(st.ar) return; st.fov=Math.max(20,Math.min(110,st.fov*(1+e.deltaY*.001))); },{passive:false});
 function tap(x,y){
-  let best=null,bd=34;
+  let best=null,bv=null,bd=34;
   for(const v of st.visible||[]){
     let d=Math.hypot(v.x-x,v.y-y);
-    if(v.big){ if(d<v.big+24){ best=v.s; break; } continue; }   // the Moon wins taps on it
-    d+=v.s.mag*2; if(d<bd){bd=d;best=v.s;} }
-  if(best) showInfo(best);
+    if(v.big){ if(d<v.big+24){ best=v.s; bv=v; break; } continue; }   // the Moon wins taps on it
+    d+=v.s.mag*2; if(d<bd){bd=d;best=v.s;bv=v;} }
+  if(!best) return;
+  if(best.isMoon||best.isPlanet) showInfo(best);   // stars get the warp zoom; Moon & planets open as before
+  else warpTo(best, bv.x, bv.y);
+}
+
+/* ================= WARP ZOOM =================
+   Tap a star: light streaks rush past, the star swells, a flash, and you arrive right beside it.
+   It draws on its own canvas (#warp) over the sky, so none of the sky drawing changes.
+   Close (or tap outside the card) flies you back out. Tapping during the trip skips to the end. */
+const wv=$("warp"), wx=wv.getContext("2d");
+const REDUCED=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const WARP_IN=1800, WARP_OUT=900;
+const warp={on:false,s:null,dir:1,t0:0,last:0,from:{x:0,y:0},parts:[],dust:[],sheetShown:false};
+const clamp01=v=>Math.max(0,Math.min(1,v)), easeIn=t=>t*t*t, easeOut=t=>1-Math.pow(1-t,3),
+      easeIO=t=>t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2, smooth=(a,b,t)=>{const k=clamp01((t-a)/(b-a));return k*k*(3-2*k);};
+
+function sizeWarp(){ wv.width=W*DPR; wv.height=H*DPR; wx.setTransform(DPR,0,0,DPR,0,0); }
+addEventListener("resize",()=>{ if(warp.on) sizeWarp(); });
+function newPart(z){ const a=Math.random()*Math.PI*2, d=.18+Math.random()*1.7;   // keep the middle clear so the star stays visible
+  return {x:Math.cos(a)*d, y:Math.sin(a)*d, z, tint:Math.random()}; }
+function seedWarp(){
+  const n=W*H>600000?650:420; warp.parts=[]; for(let i=0;i<n;i++) warp.parts.push(newPart(.05+Math.random()*.95));
+  warp.dust=[]; for(let i=0;i<160;i++) warp.dust.push({x:Math.random(),y:Math.random(),r:Math.random()*1.1+.25,a:Math.random()*.55+.15,ph:Math.random()*6.3});
+}
+/* where the star sits once you arrive: centred in the space above the info card */
+function closeGeom(){
+  const sh=Math.min($("info").offsetHeight||0, H*.86), free=Math.max(H*.34, H-sh);
+  return {x:W/2, y:Math.max(free/2, 80), r:Math.max(40, Math.min(W*.3, free*.33, 170))};
+}
+/* the catalog colours are softened for the sky; undo that so the close-up has real colour */
+function satRGB(c){ return c.split(",").map(v=>Math.round(Math.max(0,Math.min(255,(+v-114.75)/.55)))); }
+const mix=(a,b,k)=>a.map((v,i)=>Math.round(v+(b[i]-v)*k)).join(",");
+
+function warpTo(s,x,y){
+  if(warp.on) return;
+  showInfo(s,false);                       // fill the card now (so we know its height), open it on arrival
+  Object.assign(warp,{s,dir:1,t0:performance.now(),last:performance.now(),from:{x,y},sheetShown:false,on:true});
+  sizeWarp(); seedWarp(); wv.classList.add("on"); document.body.classList.add("closeup");
+  if(navigator.vibrate) try{ navigator.vibrate(12); }catch(e){}
+  requestAnimationFrame(warpFrame);
+}
+function warpOut(){
+  if(!warp.on||warp.dir<0) return;
+  openSheet(null); st.selected=null;
+  warp.dir=-1; warp.t0=warp.last=performance.now();
+}
+function endWarp(){ warp.on=false; warp.s=null; wv.classList.remove("on"); wx.clearRect(0,0,W,H); document.body.classList.remove("closeup"); }
+wv.addEventListener("pointerdown",()=>{ if(warp.on&&warp.dir>0&&!warp.sheetShown) warp.t0=performance.now()-(REDUCED?450:WARP_IN)*.9; });
+addEventListener("keydown",e=>{ if(e.key==="Escape"&&warp.on) warpOut(); });
+
+function warpFrame(now){
+  if(!warp.on) return;
+  const dt=Math.min(50,now-warp.last)/1000; warp.last=now;
+  const D=warp.dir>0?(REDUCED?450:WARP_IN):(REDUCED?300:WARP_OUT), t=clamp01((now-warp.t0)/D);
+  const G=closeGeom(), s=warp.s, col=satRGB(s.rgb);
+  wx.clearRect(0,0,W,H);
+  if(warp.dir>0){
+    // the view swings toward the star, then you launch
+    const k=easeIO(clamp01(t/.45)), vx=warp.from.x+(G.x-warp.from.x)*k, vy=warp.from.y+(G.y-warp.from.y)*k;
+    spaceBG(vx,vy,col,smooth(0,.18,t),now);
+    if(!REDUCED){
+      const sp= t<.72 ? .12+2.9*easeIn(t/.72) : .05+2.97*Math.pow(1-(t-.72)/.28,2);   // speed up, then brake
+      streaks(vx,vy,sp,dt,col,smooth(0,.12,t)*(1-smooth(.9,1,t)));
+    }
+    const g=Math.pow(smooth(.3,1,t),1.7), r=3*Math.pow(G.r/3,g);                     // swells slowly, then fast
+    drawStar(vx,vy,r,col,now,g);
+    if(!REDUCED && s.dist && t<.86) distCounter(s.dist*(1-easeIn(clamp01(t/.82))), smooth(.05,.2,t)*(1-smooth(.74,.86,t)));
+    const fl=REDUCED?0:Math.max(0,1-Math.abs(t-.9)/.1);                               // arrival flash
+    if(fl>0){ wx.fillStyle=`rgba(${mix(col,[255,255,255],.75)},${.8*fl})`; wx.fillRect(0,0,W,H); }
+    if(t>=.92&&!warp.sheetShown){ warp.sheetShown=true; openSheet("info"); }
+  } else {
+    // fly back out: the star shrinks away and the streaks run backwards
+    const fade=1-smooth(.6,1,t), k=easeIO(clamp01((t-.15)/.6));
+    const vx=G.x+(warp.from.x-G.x)*k, vy=G.y+(warp.from.y-G.y)*k;
+    spaceBG(vx,vy,col,fade,now);
+    if(!REDUCED) streaks(vx,vy,-(.2+2.2*Math.sin(Math.PI*Math.min(1,t*1.15))),dt,col,fade);
+    const r=3+(G.r-3)*(1-easeOut(clamp01(t/.75)));
+    wx.globalAlpha=fade; drawStar(vx,vy,r,col,now,1-t); wx.globalAlpha=1;
+    if(t>=1){ endWarp(); return; }
+  }
+  requestAnimationFrame(warpFrame);
+}
+
+/* deep space behind the star, with faint far stars slowly drifting past */
+function spaceBG(x,y,col,a,now){
+  if(a<=0) return;
+  wx.globalAlpha=a;
+  const g=wx.createRadialGradient(x,y,0,x,y,Math.max(W,H));
+  g.addColorStop(0,`rgb(${mix(col,[5,6,15],.86)})`); g.addColorStop(.45,"#060816"); g.addColorStop(1,"#020309");
+  wx.fillStyle=g; wx.fillRect(0,0,W,H);
+  for(const d of warp.dust){
+    const px=((d.x*W+now*.006*d.r)%W+W)%W, py=d.y*H, tw=.75+.25*Math.sin(now*.002+d.ph);
+    wx.fillStyle=`rgba(220,228,255,${d.a*tw})`; wx.beginPath(); wx.arc(px,py,d.r,0,7); wx.fill();
+  }
+  wx.globalAlpha=1;
+}
+/* light-speed streaks: points fly at you from the vanishing point and stretch into lines */
+function streaks(vx,vy,sp,dt,col,a){
+  if(a<=0) return;
+  const f=Math.min(W,H)*.32, tint=col.join(",");
+  wx.save(); wx.globalCompositeOperation="lighter"; wx.lineCap="round";
+  for(const p of warp.parts){
+    p.z-=sp*dt;
+    if(p.z<.03){ Object.assign(p,newPart(1)); continue; }
+    if(p.z>1.05){ Object.assign(p,newPart(.06)); continue; }
+    const tz=Math.min(1.2,p.z+Math.abs(sp)*.05+.004);
+    const hx=vx+p.x/p.z*f, hy=vy+p.y/p.z*f, tx=vx+p.x/tz*f, ty=vy+p.y/tz*f;
+    if(hx<-50||hx>W+50||hy<-50||hy>H+50) continue;
+    const near=1-p.z, al=Math.min(1,near*1.1)*a;
+    wx.strokeStyle= p.tint<.55?`rgba(235,240,255,${al})`: p.tint<.85?`rgba(150,185,255,${al})`:`rgba(${tint},${al})`;
+    wx.lineWidth=.4+near*2.2; wx.beginPath(); wx.moveTo(tx,ty); wx.lineTo(hx,hy); wx.stroke();
+  }
+  wx.restore();
+}
+/* the star itself: glow, a glowing disc that darkens at the edge, and slow boiling "granules" up close */
+function drawStar(x,y,r,col,now,detail){
+  const c=col.join(","), core=mix(col,[255,255,255],.6), mid=mix(col,[255,255,255],.18), rim=mix(col,[0,0,0],.4);
+  const cr=r*(2.6+.12*Math.sin(now/650))+6;
+  let g=wx.createRadialGradient(x,y,r*.5,x,y,cr);
+  g.addColorStop(0,`rgba(${c},.6)`); g.addColorStop(.3,`rgba(${c},.2)`); g.addColorStop(1,`rgba(${c},0)`);
+  wx.fillStyle=g; wx.beginPath(); wx.arc(x,y,cr,0,7); wx.fill();
+  g=wx.createRadialGradient(x,y,0,x,y,r);
+  g.addColorStop(0,`rgb(${core})`); g.addColorStop(.55,`rgb(${mid})`); g.addColorStop(.88,`rgb(${c})`); g.addColorStop(1,`rgb(${rim})`);
+  wx.fillStyle=g; wx.beginPath(); wx.arc(x,y,r,0,7); wx.fill();
+  if(detail>.35 && r>28){
+    wx.save(); wx.beginPath(); wx.arc(x,y,r*.98,0,7); wx.clip(); wx.globalCompositeOperation="lighter";
+    const N=48, a=.06*smooth(.35,1,detail);
+    for(let i=0;i<N;i++){
+      const ang=i*2.39996+now*.00006*((i%5)+1), dd=r*Math.sqrt((i+.5)/N)*.95;
+      const bx=x+Math.cos(ang)*dd, by=y+Math.sin(ang)*dd, br=r*(.13+.05*Math.sin(now*.0011+i));
+      const bg=wx.createRadialGradient(bx,by,0,bx,by,br);
+      bg.addColorStop(0,`rgba(255,255,240,${a})`); bg.addColorStop(1,"rgba(255,255,240,0)");
+      wx.fillStyle=bg; wx.beginPath(); wx.arc(bx,by,br,0,7); wx.fill();
+    }
+    wx.restore();
+    // a soft lens streak across the star, like a camera looking at something very bright
+    const ls=wx.createLinearGradient(x-r*3.2,y,x+r*3.2,y), la=.22*smooth(.5,1,detail);
+    ls.addColorStop(0,`rgba(${c},0)`); ls.addColorStop(.5,`rgba(255,255,255,${la})`); ls.addColorStop(1,`rgba(${c},0)`);
+    wx.fillStyle=ls; wx.fillRect(x-r*3.2,y-1.2,r*6.4,2.4);
+  }
+}
+/* "550 light-years to go" counting down during the trip */
+function distCounter(ly,a){
+  if(a<=0) return;
+  wx.save(); wx.globalAlpha=a; wx.textAlign="center"; wx.fillStyle="#eef1ff";
+  wx.font="600 30px Fraunces, serif"; wx.fillText(Math.max(0,Math.round(ly)).toLocaleString(),W/2,H-110);
+  wx.font="500 12px Inter, sans-serif"; wx.fillStyle="rgba(200,212,255,.75)";
+  wx.fillText("LIGHT-YEARS TO GO".split("").join(" "),W/2,H-88); wx.restore();
 }
 
 /* ================= CONTROLS ================= */
