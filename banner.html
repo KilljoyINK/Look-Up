@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>In My Room · banner</title>
+<!-- Shown by iPhone's AR Quick Look at the bottom of the room view. In My Room fills it in through the link
+     (?name=…&sub=…&fact=…&cta=…). Tapping anywhere on it closes Quick Look and opens "Send this star". -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=Inter:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box;margin:0}
+  html,body{height:100%;background:#0d1028;color:#eef1ff;font-family:Inter,system-ui,sans-serif;-webkit-text-size-adjust:100%}
+  body{display:flex;align-items:center;gap:14px;padding:12px 16px}
+  .txt{flex:1;min-width:0}
+  h1{font-family:Fraunces,serif;font-weight:600;font-size:20px;line-height:1.15;color:#ffd98a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sub{font-size:12px;color:#9aa3c7;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .fact{font-size:13px;line-height:1.35;color:#d6dbf5;margin-top:6px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+  .cta{flex:0 0 auto;background:#ffd98a;color:#0a0c1d;font-weight:600;font-size:14px;padding:10px 14px;border-radius:14px;text-align:center;max-width:110px;line-height:1.2}
+</style>
+</head>
+<body>
+  <div class="txt"><h1 id="n">A star</h1><div class="sub" id="s"></div><div class="fact" id="f"></div></div>
+  <div class="cta" id="c">Send this star</div>
+<script>
+  const q=new URLSearchParams(location.search), set=(id,k)=>{ const v=q.get(k); if(v) document.getElementById(id).textContent=v.slice(0,220); };
+  set("n","name"); set("s","sub"); set("f","fact"); set("c","cta");
+</script>
+</body>
+</html>
