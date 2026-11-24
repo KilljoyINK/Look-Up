@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>In My Room · banner</title>
 <!-- Shown by iPhone's AR Quick Look at the bottom of the room view. In My Room fills it in through the link:
-     ?name=…&kind=…&facts=Label|Value;Label|Value;Label|Value&fact=…&col=r,g,b&cta=…
+     ?d=<base64url of {"name","kind","facts":"Label|Value;…","fact","col":"r,g,b","cta"}>
      Tapping anywhere on it closes Quick Look and opens "Send this star". It stretches to fill whatever
      height Quick Look gives it, so there's no empty space. -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -17,7 +17,7 @@
   body{
     font-family:Inter,system-ui,sans-serif;color:#eef1ff;overflow:hidden;
     background:radial-gradient(140% 160% at 0% 50%,rgba(var(--c),.30) 0%,rgba(var(--c),.08) 38%,transparent 62%),#0b0e24;
-    display:grid;grid-template-columns:auto 1fr auto;gap:12px;padding:10px 10px 10px 14px;
+    display:grid;grid-template-columns:auto 1fr;gap:12px;padding:10px 12px 10px 14px;
   }
   /* the star itself, in its real colour */
   .orb{align-self:center;width:clamp(40px,34vh,60px);aspect-ratio:1;border-radius:50%;
@@ -32,13 +32,16 @@
   .f small{display:block;font-size:8.5px;letter-spacing:.35px;text-transform:uppercase;color:#9aa3c7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .f b{display:block;font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .fact{font-size:11.5px;line-height:1.3;color:#cfd5f2;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-  /* full-height Send button */
-  .cta{width:58px;border-radius:16px;background:#ffd98a;color:#0a0c1d;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;font-weight:600;font-size:13px}
-  .cta svg{width:22px;height:22px}
+  /* bottom row: story line, with a small Send pill tucked in the right corner */
+  .bottom{display:flex;align-items:flex-end;gap:10px}
+  .bottom .fact{flex:1;min-width:0}
+  .cta{flex:0 0 auto;display:flex;align-items:center;gap:5px;background:#ffd98a;color:#0a0c1d;font-weight:600;font-size:12.5px;
+    padding:6px 11px 6px 9px;border-radius:999px;box-shadow:0 2px 10px rgba(255,217,138,.25)}
+  .cta svg{width:15px;height:15px}
   /* very short banner: keep name, facts and button; drop the story line */
-  @media (max-height:110px){ .fact{display:none} .orb{width:40px} }
+  @media (max-height:110px){ .fact{visibility:hidden} .orb{width:40px} }   /* keep the Send pill in its corner */
   /* small phones: smaller orb and button so the three facts still fit */
-  @media (max-width:350px){ body{gap:8px;padding-left:10px} .orb{width:30px} .cta{width:50px;font-size:12px} .facts{gap:4px} .f{padding:3px 4px} .f b{font-size:11px} .f small{font-size:7.5px;letter-spacing:.3px} }
+  @media (max-width:350px){ body{gap:8px;padding-left:10px} .orb{width:30px} .cta{font-size:12px;padding:5px 9px 5px 8px} .facts{gap:4px} .f{padding:3px 4px} .f b{font-size:11px} .f small{font-size:7.5px;letter-spacing:.3px} }
 </style>
 </head>
 <body>
@@ -46,11 +49,18 @@
   <div class="main">
     <div><h1 id="n">A star</h1><div class="kind" id="k"></div></div>
     <div class="facts" id="fs"></div>
-    <p class="fact" id="f"></p>
+    <div class="bottom">
+      <p class="fact" id="f"></p>
+      <div class="cta"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="m4 7 8 6 8-6"/></svg><span id="c">Send</span></div>
+    </div>
   </div>
-  <div class="cta"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="m4 7 8 6 8-6"/></svg><span id="c">Send</span></div>
 <script>
-  const q=new URLSearchParams(location.search), get=(k,max=200)=>(q.get(k)||"").slice(0,max);
+  // In My Room sends everything packed in ONE value (?d=…): Quick Look splits its own settings on "&",
+  // so separate ?name=…&kind=… values got cut off after the first one.
+  const q=new URLSearchParams(location.search); let data={};
+  try{ const d=q.get("d"); if(d){ const bin=atob(d.replace(/-/g,"+").replace(/_/g,"/"));
+    data=JSON.parse(new TextDecoder().decode(Uint8Array.from(bin,c=>c.charCodeAt(0)))); } }catch(e){}
+  const get=(k,max=200)=>String(data[k]??q.get(k)??"").slice(0,max);
   const set=(id,k)=>{ const v=get(k); if(v) document.getElementById(id).textContent=v; };
   set("n","name"); set("k","kind"); set("f","fact"); set("c","cta");
   const col=get("col",20); if(/^\d{1,3},\d{1,3},\d{1,3}$/.test(col)) document.documentElement.style.setProperty("--c",col);

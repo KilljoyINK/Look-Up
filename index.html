@@ -117,6 +117,25 @@ ul.res a{color:#8fb2ff;overflow-wrap:anywhere}
 .list button{display:flex;width:100%;justify-content:space-between;align-items:center;padding:13px 2px;border-bottom:1px solid #ffffff10;font-size:15px;text-align:left}
 .list button span{color:var(--dim);font-size:13px}
 .list button.down{opacity:.45}
+/* "bringing it into your room" loading screen */
+#arLoad{--c:255,217,138;position:fixed;inset:0;z-index:45;display:grid;place-items:center;padding:24px;
+  background:rgba(5,7,18,.72);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);opacity:0;pointer-events:none;transition:opacity .25s}
+#arLoad.show{opacity:1;pointer-events:auto}
+.al-card{width:min(340px,100%);text-align:center}
+.al-orb{width:92px;height:92px;margin:0 auto 22px;border-radius:50%;position:relative;
+  background:radial-gradient(circle at 38% 35%,#fff 0%,rgba(var(--c),1) 45%,rgba(var(--c),.5) 100%);
+  box-shadow:0 0 30px 8px rgba(var(--c),.45),0 0 80px 20px rgba(var(--c),.15);animation:alPulse 2.4s ease-in-out infinite}
+.al-orb::after{content:"";position:absolute;inset:-14px;border-radius:50%;border:2px solid transparent;
+  border-top-color:rgba(var(--c),.95);border-right-color:rgba(var(--c),.35);animation:alSpin 1.1s linear infinite}
+@keyframes alSpin{to{transform:rotate(360deg)}}
+@keyframes alPulse{50%{transform:scale(1.05)}}
+#alTitle{font-family:Fraunces,serif;font-weight:600;font-size:22px;line-height:1.2;margin:0 0 6px}
+#alStep{font-size:14px;color:var(--dim);margin:0 0 14px;min-height:1.2em}
+.al-bar{height:6px;border-radius:3px;background:#ffffff1a;overflow:hidden}
+.al-bar i{display:block;height:100%;width:3%;border-radius:3px;background:rgba(var(--c),1);transition:width .2s}
+.al-meta{display:flex;justify-content:space-between;gap:10px;margin-top:8px;font-size:11px;color:var(--dim);font-variant-numeric:tabular-nums}
+#alCancel{margin-top:22px}
+@media (prefers-reduced-motion:reduce){ .al-orb,.al-orb::after{animation:none} }
 #toast{position:fixed;left:50%;top:calc(var(--st) + 70px);transform:translate(-50%,-10px);background:#ffffffee;color:#0a0c1d;padding:9px 16px;border-radius:20px;font-size:14px;font-weight:500;opacity:0;transition:.25s;pointer-events:none;z-index:50}
 #toast.show{opacity:1;transform:translate(-50%,0)}
 
@@ -283,6 +302,16 @@ body.closeup .scrim{background:transparent;pointer-events:none}   /* lets you dr
   </div>
 </section>
 
+<div id="arLoad" role="status" aria-live="polite">
+  <div class="al-card">
+    <div class="al-orb"></div>
+    <h2 id="alTitle">Bringing it into your room</h2>
+    <p id="alStep">Getting started…</p>
+    <div class="al-bar"><i id="alFill"></i></div>
+    <div class="al-meta"><span id="alTime">0.0 s</span><span id="alTimes"></span></div>
+    <button class="btn ghost" id="alCancel">Cancel</button>
+  </div>
+</div>
 <div id="toast"></div>
 
 <!-- Astronomy Engine 2.x by Don Cross (MIT): planets, Moon, Sun, precession, nutation, refraction -->
@@ -1652,7 +1681,7 @@ function renderStarGL(L, now){
    It paints in tiles into an off-screen buffer, so: the live close-up's canvas is never resized (it keeps
    spinning smoothly while the file builds), no single GPU job runs long enough for iOS to stop it, and it
    works even on phones whose screen buffer can't reach 4K. */
-async function bakePixels(L, kind, phase, w, h){
+async function bakePixels(L, kind, phase, w, h, onProgress){
   const {gl,bake:{pr,u}}=SG, tw=Math.min(1024,w), th=Math.min(1024,h);
   if(!SG.fbo||SG.fboW!==tw||SG.fboH!==th){
     if(SG.fbo){ gl.deleteFramebuffer(SG.fbo); gl.deleteTexture(SG.fboTex); }
@@ -1664,7 +1693,7 @@ async function bakePixels(L, kind, phase, w, h){
     gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,SG.fboTex,0);
     gl.bindFramebuffer(gl.FRAMEBUFFER,null); SG.fboW=tw; SG.fboH=th;
   }
-  const img=new ImageData(w,h), px=new Uint8Array(tw*th*4);
+  const img=new ImageData(w,h), px=new Uint8Array(tw*th*4), total=Math.ceil(w/tw)*Math.ceil(h/th); let done=0;
   for(let ty=0;ty<h;ty+=th) for(let tx=0;tx<w;tx+=tw){
     gl.bindFramebuffer(gl.FRAMEBUFFER,SG.fbo); gl.viewport(0,0,tw,th);
     gl.disable(gl.DEPTH_TEST); gl.disable(gl.BLEND); gl.useProgram(pr);
@@ -1675,7 +1704,8 @@ async function bakePixels(L, kind, phase, w, h){
     gl.readPixels(0,0,tw,th,gl.RGBA,gl.UNSIGNED_BYTE,px);
     gl.bindFramebuffer(gl.FRAMEBUFFER,null);
     for(let r=0;r<th;r++) img.data.set(px.subarray(r*tw*4,(r+1)*tw*4), ((h-1-(ty+r))*w+tx)*4);   // WebGL rows come bottom-first
-    await new Promise(requestAnimationFrame);                         // let the close-up draw a frame between tiles
+    if(onProgress) onProgress(++done/total);
+    await new Promise(r=>setTimeout(r,0));                              // breathe between tiles so the close-up keeps drawing
   }
   return img;
 }
@@ -1869,15 +1899,26 @@ async function encodeImg(img,type,quality=.9){
   const b=await new Promise((res,rej)=>c.toBlob(x=>x?res(x):rej(new Error("image encode failed")),type,quality));
   return new Uint8Array(await b.arrayBuffer());
 }
-async function buildUSDZ(s){
+async function buildUSDZ(s, job={times:{}}){
   if(!starGL()) throw new Error("no WebGL");
+  // step(): note how long the last step took (shown on the loading screen, so slow steps are easy to spot)
+  let last=performance.now(); job.step=null;
+  const step=(name,p)=>{ const now=performance.now(); if(job.step) job.times[job.step]=(now-last)/1000; last=now; job.step=name; job.p=p; };
   const L=lookFor(s), files=[], tex="textures/surface.jpg";
-  // one sharp 4K map (4096 × 2048) for stars and planets alike
-  files.push({name:tex, data:await encodeImg(await bakePixels(L,L.kind,0,4096,2048),"image/jpeg",.9)});
-  if(L.ring) files.push({name:"textures/rings.png", data:await encodeImg(await bakePixels(L,6,0,4096,16),"image/png")});
-  const usda=new TextEncoder().encode(usdaFor(s,L,tex));
-  return zipUSDZ([{name:`${s.id}.usda`, data:usda}, ...files]);
+  step("Painting the surface",0);                                    // one sharp 4K map (4096 × 2048)
+  const map=await bakePixels(L,L.kind,0,4096,2048,f=>job.p=f*.55);
+  step("Saving the 4K picture",.55);
+  files.push({name:tex, data:await encodeImg(map,"image/jpeg",.9)});
+  if(L.ring){ step("Adding the rings",.8); files.push({name:"textures/rings.png", data:await encodeImg(await bakePixels(L,6,0,4096,16),"image/png")}); }
+  step("Packing the 3D model",.88);
+  const usda=new TextEncoder().encode(usdaFor(s,L,tex)), blob=zipUSDZ([{name:`${s.id}.usda`, data:usda}, ...files]);
+  step("Ready",1);
+  console.info("[In My Room] room file for",s.name,"seconds per step:",job.times,"size MB:",(blob.size/1e6).toFixed(2));
+  return blob;
 }
+/* text → base64url (letters, digits, - and _ only, so it survives inside Quick Look's link) */
+const b64url=o=>{ let t=""; for(const c of new TextEncoder().encode(JSON.stringify(o))) t+=String.fromCharCode(c);
+  return btoa(t).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,""); };
 /* What the Quick Look banner shows: name, what kind of object it is, three quick facts, one story line, its colour */
 function starKind(L){
   const T=L.T, colour= T>10000?"Blue-white": T>7500?"White": T>6000?"Yellow-white": T>5200?"Yellow": T>3700?"Orange":"Red";
@@ -1906,7 +1947,7 @@ function openQuickLook(blob,s){
   let frag=`#allowsContentScaling=0&canonicalWebPageURL=${e(shareLink(s))}`;
   if(BANNER_OK){                                // online and banner.html was found next to this file: our banner with a fact
     const b=new URL("banner.html",location.href);
-    b.search=new URLSearchParams(bannerInfo(s)).toString();
+    b.search="?d="+b64url(bannerInfo(s));          // one value, no "&": Quick Look splits on "&" and would cut the rest off
     frag+=`&custom=${e(b.href)}&customHeight=large`;
   } else frag+=`&callToAction=${e("Send this "+kind)}&checkoutTitle=${e(s.name)}&checkoutSubtitle=${e(sub)}`;
   document.querySelectorAll("a[data-ql]").forEach(a=>a.remove());
@@ -1915,17 +1956,41 @@ function openQuickLook(blob,s){
   a.addEventListener("message",ev=>{ if(ev.data==="_apple_ar_quicklook_button_tapped"){ st.selected=s; $("bSend").click(); } },false);
   document.body.appendChild(a); a.click();
 }
-/* start (or reuse) building the room file for s; failed builds are forgotten so a tap can retry */
+/* start (or reuse) building the room file for s. Each build keeps its progress for the loading screen;
+   failed builds are forgotten so a tap can retry. */
 function prepUSDZ(s){
-  if(!usdzCache[s.id]){ const p=buildUSDZ(s); usdzCache[s.id]=p; p.catch(()=>{ if(usdzCache[s.id]===p) delete usdzCache[s.id]; }); }
-  return usdzCache[s.id];
+  let job=usdzCache[s.id];
+  if(!job){ job={times:{},p:0,step:"Getting started"}; job.promise=buildUSDZ(s,job); usdzCache[s.id]=job;
+    job.promise.catch(()=>{ if(usdzCache[s.id]===job) delete usdzCache[s.id]; }); }
+  return job;
 }
+/* loading screen: shown from the tap until Quick Look takes over */
+const AL={on:false};
+function showARLoad(s,job){
+  const el=$("arLoad"); el.style.setProperty("--c",satRGB(s.rgb).join(","));
+  $("alTitle").textContent=`Bringing ${s.name} into your room`; $("alTimes").textContent="";
+  Object.assign(AL,{on:true,job,t0:performance.now(),cancelled:false,opening:false});
+  el.classList.add("show");
+  (function tick(){ if(!AL.on) return;
+    const j=AL.job, p=AL.opening?1:Math.max(.03,j.p||0);
+    $("alFill").style.width=(p*100).toFixed(1)+"%";
+    $("alStep").textContent=AL.opening?"Opening the camera view…":(j.step==="Ready"?"Almost there…":j.step+"…");
+    $("alTime").textContent=((performance.now()-AL.t0)/1000).toFixed(1)+" s";
+    requestAnimationFrame(tick); })();
+}
+function hideARLoad(){ AL.on=false; $("arLoad").classList.remove("show"); }
+$("alCancel").onclick=()=>{ AL.cancelled=true; hideARLoad(); };      // the build keeps going quietly, so a second tap is quicker
+document.addEventListener("visibilitychange",()=>{ if(document.hidden&&AL.opening) hideARLoad(); });
 async function viewInRoom(s){
-  const btn=$("bAR3D"), label=btn.textContent;
-  btn.disabled=true; btn.textContent="Getting it ready…";
-  try{ openQuickLook(await prepUSDZ(s),s); }
-  catch(e){ console.warn(e); toast("Couldn't build the 3D view on this phone"); }
-  finally{ btn.disabled=false; btn.textContent=label; }
+  const job=prepUSDZ(s); showARLoad(s,job);
+  try{
+    const blob=await job.promise; if(AL.cancelled||!AL.on) return;
+    AL.opening=true;
+    const t=job.times, f=x=>x!=null?x.toFixed(1)+" s":"–";
+    $("alTimes").textContent=`surface ${f(t["Painting the surface"])} · picture ${f(t["Saving the 4K picture"])} · model ${f(t["Packing the 3D model"])}`;
+    openQuickLook(blob,s);
+    setTimeout(hideARLoad,4000);                                         // Quick Look covers the page by then
+  }catch(e){ console.warn(e); hideARLoad(); toast("Couldn't build the 3D view on this phone"); }
 }
 $("bAR3D").onclick=()=>{ if(st.selected) viewInRoom(st.selected); };
 /* "550 light-years to go" counting down during the trip */
